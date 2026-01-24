@@ -1,10 +1,10 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <Python.h>
 
 #include "camera.hpp"
 #include "graph.hpp"
 #include "ops.hpp"
-#include "preprocessing.hpp"
 #include "utils.hpp"
 
 namespace py = pybind11;
@@ -38,6 +38,10 @@ PYBIND11_MODULE(_visionrt, m) {
            "Return a FrameGenerator that yields frames from this Camera.");
 
     m.def("fused_add_relu_cuda", &launch_add_relu, "Fused add + relu");
+    m.def("yuyv2rgb_cuda", &launch_yuyv2rgb_chw,
+          py::arg("yuyv"), py::arg("height"), py::arg("width"),
+          py::arg("scale"), py::arg("offset"),
+          "YUYV to normalized RGB CHW conversion");
     m.def("set_verbose", &set_verbose, "Enable/disable verbose logging");
 
 }
