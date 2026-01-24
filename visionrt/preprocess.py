@@ -17,32 +17,29 @@ YUV2RGB_33 = tl.constexpr(0)
 
 
 @triton.jit
-def _normalized_yuyv2rgb_kernel(
+def _yuyv2rgb_kernel(
     yuyv_ptr,
     out_ptr,
     stride,
-    length,
+    num_pairs,
     SCALE_R: tl.constexpr,
     SCALE_G: tl.constexpr,
     SCALE_B: tl.constexpr,
     OFFSET_R: tl.constexpr,
     OFFSET_G: tl.constexpr,
     OFFSET_B: tl.constexpr,
-    BLOCKDIM: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
 ):
-    blockIdx = tl.program_id(0)
-    threadIdx = tl.arange(0, BLOCKDIM)
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < num_pairs
 
-    pair_idx = blockIdx * BLOCKDIM + threadIdx
-    total_pairs = length >> 2
-    mask = pair_idx < total_pairs
+    yuyv = tl.load(yuyv_ptr + offsets, mask=mask, other=0).to(tl.uint32)
 
-    yuyv_pair = tl.load(yuyv_ptr + pair_idx, mask=mask, other=0).to(tl.uint32)
-
-    Y0 = ((yuyv_pair & 0xFF) - Y_OFFSET).to(tl.int32)
-    U = (((yuyv_pair >> 8) & 0xFF) - UV_OFFSET).to(tl.int32)
-    Y1 = (((yuyv_pair >> 16) & 0xFF) - Y_OFFSET).to(tl.int32)
-    V = (((yuyv_pair >> 24) & 0xFF) - UV_OFFSET).to(tl.int32)
+    Y0 = ((yuyv & 0xFF) - Y_OFFSET).to(tl.int32)
+    U = (((yuyv >> 8) & 0xFF) - UV_OFFSET).to(tl.int32)
+    Y1 = (((yuyv >> 16) & 0xFF) - Y_OFFSET).to(tl.int32)
+    V = (((yuyv >> 24) & 0xFF) - UV_OFFSET).to(tl.int32)
 
     uv_r = YUV2RGB_12 * U + YUV2RGB_13 * V
     uv_g = YUV2RGB_22 * U + YUV2RGB_23 * V
@@ -59,85 +56,44 @@ def _normalized_yuyv2rgb_kernel(
     G1 = tl.maximum(0, tl.minimum(255.0, (y1_scaled + uv_g) >> 8))
     B1 = tl.maximum(0, tl.minimum(255.0, (y1_scaled + uv_b) >> 8))
 
-    R0_n = R0 * SCALE_R + OFFSET_R
-    R1_n = R1 * SCALE_R + OFFSET_R
+    px = offsets * 2
 
-    G0_n = G0 * SCALE_G + OFFSET_G
-    G1_n = G1 * SCALE_G + OFFSET_G
+    tl.store(out_ptr + px, R0 * SCALE_R + OFFSET_R, mask=mask)
+    tl.store(out_ptr + px + 1, R1 * SCALE_R + OFFSET_R, mask=mask)
 
-    B0_n = B0 * SCALE_B + OFFSET_B
-    B1_n = B1 * SCALE_B + OFFSET_B
+    tl.store(out_ptr + stride + px, G0 * SCALE_G + OFFSET_G, mask=mask)
+    tl.store(out_ptr + stride + px + 1, G1 * SCALE_G + OFFSET_G, mask=mask)
 
-    pixel_base = pair_idx << 1
-    R0_index = pixel_base
-    R1_index = pixel_base + 1
-
-    G0_index = R0_index + stride
-    G1_index = R1_index + stride
-
-    B0_index = G0_index + stride
-    B1_index = G1_index + stride
-
-    tl.store(out_ptr + R0_index, R0_n, mask=mask)
-    tl.store(out_ptr + R1_index, R1_n, mask=mask)
-
-    tl.store(out_ptr + G0_index, G0_n, mask=mask)
-    tl.store(out_ptr + G1_index, G1_n, mask=mask)
-
-    tl.store(out_ptr + B0_index, B0_n, mask=mask)
-    tl.store(out_ptr + B1_index, B1_n, mask=mask)
+    tl.store(out_ptr + 2 * stride + px, B0 * SCALE_B + OFFSET_B, mask=mask)
+    tl.store(out_ptr + 2 * stride + px + 1, B1 * SCALE_B + OFFSET_B, mask=mask)
 
 
-def _preprocess(
-    frame: torch.Tensor,
-    stride: int,
-    scale: list,
-    offset: list,
-):
-    out = torch.empty(3 * stride, dtype=torch.float32, device=frame.device)
-    num_pairs = frame.numel()
-    length = num_pairs * 4
-
-    grid = ((num_pairs + 256 - 1) // 256,)
-
-    _normalized_yuyv2rgb_kernel[grid](
-        yuyv_ptr=frame.flatten(),
-        out_ptr=out,
-        stride=stride,
-        length=length,
-        SCALE_R=scale[0],
-        SCALE_G=scale[1],
-        SCALE_B=scale[2],
-        OFFSET_R=offset[0],
-        OFFSET_G=offset[1],
-        OFFSET_B=offset[2],
-        BLOCKDIM=tl.constexpr(256),
-    )
-
-    return out
+BLOCK_SIZE = tl.constexpr(256)
 
 
 class Preprocessor:
     def __init__(
-        self, mean: list = [0.485, 0.456, 0.406], stdev: list = [0.229, 0.224, 0.225]
+        self,
+        mean: list = [0.485, 0.456, 0.406],
+        std: list = [0.229, 0.224, 0.225],
     ) -> None:
+        assert len(mean) == 3 and len(std) == 3
+        self._scale = tuple(1 / (255 * std[i]) for i in range(3))
+        self._offset = tuple(-mean[i] / std[i] for i in range(3))
 
-        assert len(mean) == 3
-        assert len(stdev) == 3
+    def __call__(self, frame: numpy.ndarray) -> torch.Tensor:
+        h, w = frame.shape[:2]
+        num_pairs = (h * w) // 2
+        stride = h * w
 
-        self._scale = [1 / (255 * stdev[i]) for i in range(3)]
-        self._offset = [-mean[i] / stdev[i] for i in range(3)]
+        yuyv = torch.from_numpy(frame.ravel().view(numpy.uint32)).cuda()
+        out = torch.empty(3 * stride, dtype=torch.float32, device="cuda")
 
-    def __call__(self, frame: numpy.ndarray):
-        height, width, *_ = frame.shape
-        frame_flat = frame.reshape(-1).view(numpy.uint32)
-        frame_tensor = torch.from_numpy(frame_flat).to(device="cuda")
-
-        rgb = _preprocess(
-            frame=frame_tensor,
-            stride=height * width,
-            scale=self._scale,
-            offset=self._offset,
+        grid = ((num_pairs + BLOCK_SIZE - 1) // BLOCK_SIZE,)
+        _yuyv2rgb_kernel[grid](
+            yuyv, out, stride, num_pairs,
+            *self._scale, *self._offset,
+            BLOCK_SIZE=BLOCK_SIZE,
         )
 
-        return rgb.reshape(1, 3, height, width)
+        return out.view(1, 3, h, w)

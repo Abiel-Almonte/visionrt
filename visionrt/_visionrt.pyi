@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy
 import torch
 import typing
-__all__: list[str] = ['Camera', 'FrameGenerator', 'GraphExecutor', 'fused_add_relu_cuda', 'launch_yuyv2rgb_chw_torch', 'set_verbose']
+__all__: list[str] = ['Camera', 'FrameGenerator', 'GraphExecutor', 'fused_add_relu_cuda', 'set_verbose', 'yuyv2rgb_cuda']
 class Camera:
     """
     Wrapper around a V4L2 camera device
@@ -80,11 +80,11 @@ def fused_add_relu_cuda(arg0: torch.Tensor, arg1: torch.Tensor) -> torch.Tensor:
     """
     Fused add + relu
     """
-def launch_yuyv2rgb_chw_torch(yuyv_ptr: torch.Tensor, stride: int, length: int) -> torch.Tensor:
-    """
-    CUDA YUYV to RGB preprocessing kernel
-    """
 def set_verbose(arg0: bool) -> None:
     """
     Enable/disable verbose logging
+    """
+def yuyv2rgb_cuda(yuyv: torch.Tensor, height: int, width: int, scale: list[float], offset: list[float]) -> torch.Tensor:
+    """
+    YUYV to normalized RGB CHW conversion
     """
