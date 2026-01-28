@@ -2,14 +2,15 @@
 
 Skip the overhead:
 ```python
-from visionrt import Camera
+from visionrt import Camera, Preprocessor
 import visionrt
 
 camera = Camera("/dev/video0")
 model = visionrt.compile(model)
 
 for frame in camera.stream():
-    out = model(frame.unsqueeze(0))
+    tensor = Preprocessor(frame)
+    out = model(tensor)
 ```
 
 So fast you can see your camera's true refresh rate:
