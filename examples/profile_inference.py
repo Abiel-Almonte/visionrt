@@ -35,8 +35,10 @@ def preprocessing(frame, memory_format=None):
 def inference(tensor, model, name):
     with nvtx.annotate(f"inference_{name}", color="red"):
         model(tensor)
-        
-        if not config.cudagraphs: # the stream sync in csrc/graph.hpp handles the graph execution. 
+
+        if (
+            not config.cudagraphs
+        ):  # the stream sync in csrc/graph.hpp handles the graph execution.
             torch.cuda.synchronize()
 
 
@@ -130,7 +132,7 @@ if __name__ == "__main__":
             folding_fusing_cudagraph_model,
             cap,
             profile_iters,
-            perf=PERF
+            perf=PERF,
         )
 
     if PERF:
