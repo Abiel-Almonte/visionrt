@@ -81,12 +81,12 @@ class Preprocessor:
         self._scale = tuple(1 / (255 * std[i]) for i in range(3))
         self._offset = tuple(-mean[i] / std[i] for i in range(3))
 
-    def __call__(self, frame: numpy.ndarray) -> torch.Tensor:
+    def __call__(self, frame: torch.Tensor) -> torch.Tensor:
         h, w = frame.shape[:2]
         num_pairs = (h * w) // 2
         stride = h * w
 
-        yuyv = torch.from_numpy(frame.ravel().view(numpy.uint32)).cuda(non_blocking=True)
+        yuyv = frame.view(-1).view(torch.uint32)
         out = torch.empty(3 * stride, dtype=torch.float32, device="cuda")
 
         grid = ((num_pairs + BLOCK_SIZE - 1) // BLOCK_SIZE,)
