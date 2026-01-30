@@ -2,10 +2,9 @@
 C++/CUDA runtime providing a GPU-resident pipeline for camera capture, preprocessing, and PyTorch integration.
 """
 from __future__ import annotations
-import numpy
 import torch
 import typing
-__all__: list[str] = ['Camera', 'FrameGenerator', 'GraphExecutor', 'fused_add_relu_cuda', 'set_verbose', 'yuyv2rgb_cuda']
+__all__: list[str] = ['Camera', 'GraphExecutor', 'fused_add_relu_cuda', 'set_verbose', 'yuyv2rgb_cuda']
 class Camera:
     """
     Wrapper around a V4L2 camera device
@@ -14,13 +13,15 @@ class Camera:
         """
         Open a camera at the given device path (e.g., '/dev/video0').
         """
+    def __iter__(self) -> Camera:
+        ...
+    def __next__(self) -> torch.Tensor:
+        ...
     def __repr__(self) -> str:
-        """
-        Print the Camera object.
-        """
+        ...
     def close(self) -> None:
         """
-        Close the opened camera
+        Close the camera device.
         """
     def print_formats(self) -> None:
         """
@@ -28,33 +29,25 @@ class Camera:
         """
     def print_selected_format(self) -> None:
         """
-        Print the currently selected camera format.
-        """
-    def reset_stats(self) -> None:
-        """
-        Reset internal timing statistics.
+        Print the currently selected format.
         """
     def set_format(self, index: int) -> None:
         """
-        Set the capture format.
+        Set the capture format by index.
         """
-    def stream(self) -> FrameGenerator:
+    def stream(self) -> Camera:
         """
-        Return a FrameGenerator that yields frames from this Camera.
+        Return an iterator that yields frames.
         """
-class FrameGenerator:
-    """
-    Iterator that yields preprocessed frames from a Camera as torch.Tensors
-    """
-    def __iter__(self) -> FrameGenerator:
+    @property
+    def height(self) -> int:
         """
-        Return the iterator object itself.
+        Height of the current format.
         """
-    def __next__(self) -> numpy.ndarray[numpy.uint8]:
+    @property
+    def width(self) -> int:
         """
-        Advance to the next frame.
-        
-        Raises StopIteration when no frames remain.
+        Width of the current format.
         """
 class GraphExecutor:
     """
