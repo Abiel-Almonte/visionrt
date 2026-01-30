@@ -15,7 +15,7 @@ inline void set_verbose(bool is_verbose){
 }
 
 struct logging {
-    static void info(const std::string& x){
+    static void info(const char* x){
         if (verbose) {
             std::cout << "[visionrt] INFO: " << x << std::endl;
         }
@@ -27,7 +27,7 @@ struct logging {
         }
     }
 
-    static void error(const std::string& x){
+    static void error(const char* x){ 
         std::cerr << "[visionrt] ERROR: " << x << std::endl;
     }
 
