@@ -1,10 +1,12 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <fcntl.h>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <pybind11/pybind11.h>
@@ -31,12 +33,19 @@ inline std::ostream& operator<<(std::ostream& os, const CameraFMT& fmt) {
 
 class Camera {
 private:
+    using Clock = std::chrono::steady_clock;
+    using TimePoint = Clock::time_point;
+    using Duration = std::chrono::duration<double>;
+
     int fd_ = -1;
     std::vector<CameraFMT> formats_;
     std::optional<size_t> best_fmt_idx_;
     std::optional<size_t> current_fmt_idx_;
     CameraRingBuffer ring_;
     bool streaming_ = false;
+
+    bool deterministic_ = false;
+    std::optional<TimePoint> last_frame_time_;
 
     static int open_device(const char* path) {
         int fd = open(path, O_RDWR);
@@ -94,9 +103,10 @@ private:
     }
 
 public:
-    explicit Camera(const char* device)
+    explicit Camera(const char* device, bool deterministic = false)
         : fd_(open_device(device))
         , ring_(fd_)
+        , deterministic_(deterministic)
     {
         validate_capabilities();
         discover_formats();
@@ -160,8 +170,24 @@ public:
         return formats_[*current_fmt_idx_].height;
     }
 
+    double fps() const {
+        if (!current_fmt_idx_) throw std::runtime_error("No format set");
+        return formats_[*current_fmt_idx_].fps;
+    }
+
     [[nodiscard]] bool is_streaming() const noexcept {
         return streaming_;
+    }
+
+    [[nodiscard]] bool is_deterministic() const noexcept {
+        return deterministic_;
+    }
+
+    void set_deterministic(bool enabled) noexcept {
+        deterministic_ = enabled;
+        if (!enabled) {
+            last_frame_time_.reset();
+        }
     }
 
     void start_streaming() {
@@ -211,6 +237,14 @@ public:
             start_streaming();
         }
 
+        if (deterministic_ && last_frame_time_) {
+            Duration target_interval(1.0 / fps());
+            auto elapsed = Clock::now() - *last_frame_time_;
+            if (elapsed < target_interval) {
+                std::this_thread::sleep_for(target_interval - elapsed);
+            }
+        }
+
         int idx = ring_.dequeue_buffer();
         if (idx == -1) {
             throw std::runtime_error("Failed to dequeue buffer");
@@ -218,6 +252,11 @@ public:
 
         auto frame = capture_frame(idx);
         ring_.queue_buffer(idx);
+
+        if (deterministic_) {
+            last_frame_time_ = Clock::now();
+        }
+
         return frame;
     }
 

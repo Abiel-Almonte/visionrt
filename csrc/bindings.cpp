@@ -20,13 +20,17 @@ PYBIND11_MODULE(_visionrt, m) {
 
 
     py::class_<Camera>(m, "Camera", "Wrapper around a V4L2 camera device")
-        .def(py::init<const char*>(), py::arg("device"), "Open a camera at the given device path (e.g., '/dev/video0').")
+        .def(py::init<const char*, bool>(), py::arg("device"), py::arg("deterministic") = false,
+             "Open a camera at the given device path (e.g., '/dev/video0').")
         .def("close", &Camera::close_camera, "Close the camera device.")
         .def("print_formats", &Camera::list_formats, "Print all supported camera formats.")
         .def("set_format", &Camera::set_format, py::arg("index"), "Set the capture format by index.")
         .def("print_selected_format", &Camera::print_format, "Print the currently selected format.")
         .def_property_readonly("width", &Camera::width, "Width of the current format.")
         .def_property_readonly("height", &Camera::height, "Height of the current format.")
+        .def_property_readonly("fps", &Camera::fps, "FPS of the current format.")
+        .def_property("deterministic", &Camera::is_deterministic, &Camera::set_deterministic,
+                      "Enable/disable deterministic frame pacing to enforce target FPS.")
         .def("__repr__", &Camera::__repr__)
         .def("__iter__", &Camera::__iter__, py::return_value_policy::reference_internal)
         .def("__next__", &Camera::__next__)
