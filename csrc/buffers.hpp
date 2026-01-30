@@ -1,189 +1,193 @@
 #pragma once
 
+#include <cerrno>
+#include <cstddef>
+#include <cstring>
+#include <linux/videodev2.h>
+#include <sstream>
+#include <stdexcept>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <unistd.h>
+#include <vector>
 
-#include <stdexcept>
+class CameraRingBuffer {
+private:
+    struct Buffer {
+        void* data = nullptr;
+        size_t length = 0;
+        v4l2_buffer v4l2_buf{};
+    };
 
-#include "utils.hpp"
+    int fd_;
+    v4l2_buf_type type_;
+    v4l2_memory memory_;
+    std::vector<Buffer> buffers_;
+    v4l2_buffer dequeue_buf_{};
+    bool initialized_ = false;
+    bool streaming_ = false;
 
-struct CameraBuffer {
-    void* start;
-    v4l2_buffer v4l_buf;
+    void request_buffers(size_t count) {
+        v4l2_requestbuffers req{};
+        req.type = type_;
+        req.memory = memory_;
+        req.count = count;
 
-    size_t length() const {
-        return v4l_buf.length;
+        if (ioctl(fd_, VIDIOC_REQBUFS, &req) == -1) {
+            std::ostringstream ss;
+            ss << "VIDIOC_REQBUFS failed: " << strerror(errno);
+            throw std::runtime_error(ss.str());
+        }
+
+        buffers_.resize(req.count);
     }
-};
 
-class CameraRingBuffer{
-    private:
-        CameraBuffer* buffers;
-        v4l2_buffer dq_buffer;
-        v4l2_buf_type type;
-        v4l2_memory memory;
-        int fd;
-        int n_buffers;
-        bool streaming;
+    void map_buffers() {
+        for (size_t i = 0; i < buffers_.size(); i++) {
+            auto& buf = buffers_[i];
 
-        void cleanup(int count) {
-            if (!buffers) {
-                return;
+            buf.v4l2_buf.type = type_;
+            buf.v4l2_buf.memory = memory_;
+            buf.v4l2_buf.index = i;
+
+            if (ioctl(fd_, VIDIOC_QUERYBUF, &buf.v4l2_buf) == -1) {
+                unmap_buffers(i);
+                std::ostringstream ss;
+                ss << "VIDIOC_QUERYBUF failed for buffer " << i << ": " << strerror(errno);
+                throw std::runtime_error(ss.str());
             }
 
-            for (int i = 0; i < count; i++) {
-                if (buffers[i].start && buffers[i].start != MAP_FAILED) {
-                    munmap(buffers[i].start, buffers[i].length());
-                }
+            buf.length = buf.v4l2_buf.length;
+            buf.data = mmap(nullptr, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, buf.v4l2_buf.m.offset);
+
+            if (buf.data == MAP_FAILED) {
+                buf.data = nullptr;
+                unmap_buffers(i);
+                std::ostringstream ss;
+                ss << "mmap failed for buffer " << i << ": " << strerror(errno);
+                throw std::runtime_error(ss.str());
             }
         }
-        
-    public:
-        explicit CameraRingBuffer(
-            int _fd, 
-            int _n_buffers = 3, 
-            v4l2_buf_type _type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
-            v4l2_memory _memory = V4L2_MEMORY_MMAP //memory mapping
-        ) : buffers(nullptr), n_buffers(_n_buffers), fd(_fd), type(_type), memory(_memory), streaming(false){
-            clear(&dq_buffer);
-        }
+    }
 
-        ~CameraRingBuffer() {
-            try { 
-                stop_streaming(); 
-            } catch(...){}
-
-            cleanup(n_buffers);
-            delete[] buffers;
-        }
-
-        CameraRingBuffer(const CameraRingBuffer&) = delete;
-        CameraRingBuffer& operator=(const CameraRingBuffer&) = delete;
-
-        CameraRingBuffer(CameraRingBuffer&&) = delete;
-        CameraRingBuffer& operator=(CameraRingBuffer&&) = delete;
-
-        void init(){
-            if (buffers) {
-                return;
-            }
-            v4l2_requestbuffers reqbuff;
-            clear(&reqbuff);
-            reqbuff.type = type;
-            reqbuff.memory = memory;
-            reqbuff.count = n_buffers;
-
-            if(ioctl(fd, VIDIOC_REQBUFS, &reqbuff) == -1){
-                perror("Camera does NOT support mmap-streaming");
-            }
-            
-            n_buffers = reqbuff.count;
-            buffers = new CameraBuffer[n_buffers];
-
-            clear(&dq_buffer);
-            dq_buffer.type = type;
-            dq_buffer.memory = memory;
-
-            for (int i = 0; i < n_buffers; i++) {
-                CameraBuffer& buffer = buffers[i];
-
-                clear(&buffer.v4l_buf);
-                buffer.v4l_buf.type = type;
-                buffer.v4l_buf.memory = memory;
-                buffer.v4l_buf.index = i;
-
-                if (ioctl(fd, VIDIOC_QUERYBUF, &buffer.v4l_buf) == -1) {
-                    cleanup(i);
-                    throw std::runtime_error("VIDIOC_QUERYBUF failed");
-                }
-
-                buffer.start = mmap(NULL, buffer.length(), PROT_READ | PROT_WRITE, MAP_SHARED, fd, buffer.v4l_buf.m.offset);
-
-                if (MAP_FAILED == buffers[i].start) {
-                    cleanup(i);
-                    throw std::runtime_error("mmap failed");
-                }
+    void unmap_buffers(size_t count) {
+        for (size_t i = 0; i < count && i < buffers_.size(); i++) {
+            if (buffers_[i].data && buffers_[i].data != MAP_FAILED) {
+                munmap(buffers_[i].data, buffers_[i].length);
+                buffers_[i].data = nullptr;
             }
         }
+    }
 
-        void queue_buffer(int i) {
-            if(ioctl(fd, VIDIOC_QBUF, &buffers[i].v4l_buf) == -1){
-                throw std::runtime_error("Failed to queue buffer in CameraRingBuffer");
-            }
+    void queue_all() {
+        for (size_t i = 0; i < buffers_.size(); i++) {
+            queue_buffer(i);
+        }
+    }
+
+    void initialize() {
+        if (initialized_) return;
+
+        request_buffers(buffers_.size());
+        map_buffers();
+
+        dequeue_buf_.type = type_;
+        dequeue_buf_.memory = memory_;
+
+        initialized_ = true;
+    }
+
+public:
+    explicit CameraRingBuffer(
+        int fd,
+        size_t num_buffers = 3,
+        v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        v4l2_memory memory = V4L2_MEMORY_MMAP
+    )
+        : fd_(fd)
+        , type_(type)
+        , memory_(memory)
+        , buffers_(num_buffers)
+    {}
+
+    ~CameraRingBuffer() {
+        try { stop_streaming(); } catch (...) {}
+        unmap_buffers(buffers_.size());
+    }
+
+    CameraRingBuffer(const CameraRingBuffer&) = delete;
+    CameraRingBuffer& operator=(const CameraRingBuffer&) = delete;
+    CameraRingBuffer(CameraRingBuffer&&) = delete;
+    CameraRingBuffer& operator=(CameraRingBuffer&&) = delete;
+
+    void queue_buffer(size_t index) {
+        if (index >= buffers_.size()) {
+            throw std::out_of_range("Buffer index out of range");
         }
 
-        int dequeue_buffer(){
-            clear(&dq_buffer);
-            dq_buffer.type = type;
-            dq_buffer.memory = memory;
-            
-            if(ioctl(fd, VIDIOC_DQBUF, &dq_buffer) == -1){
-                return -1;
-            }
+        if (ioctl(fd_, VIDIOC_QBUF, &buffers_[index].v4l2_buf) == -1) {
+            std::ostringstream ss;
+            ss << "VIDIOC_QBUF failed for buffer " << index << ": " << strerror(errno);
+            throw std::runtime_error(ss.str());
+        }
+    }
 
-            return dq_buffer.index;
+    [[nodiscard]] int dequeue_buffer() {
+        dequeue_buf_.type = type_;
+        dequeue_buf_.memory = memory_;
+
+        if (ioctl(fd_, VIDIOC_DQBUF, &dequeue_buf_) == -1) {
+            return -1;
         }
 
-        void q_all_buffers(){
-            for (int i = 0; i < n_buffers; i++){
-                queue_buffer(i);
-            }
+        return static_cast<int>(dequeue_buf_.index);
+    }
+
+    void start_streaming() {
+        if (streaming_) return;
+
+        initialize();
+        queue_all();
+
+        if (ioctl(fd_, VIDIOC_STREAMON, &type_) == -1) {
+            std::ostringstream ss;
+            ss << "VIDIOC_STREAMON failed: " << strerror(errno);
+            throw std::runtime_error(ss.str());
         }
 
-        bool dq_and_q_buffer(){
-            int idx = dequeue_buffer();
+        streaming_ = true;
+    }
 
-            if (idx == -1){
-                return false;
-            }
+    void stop_streaming() {
+        if (!streaming_) return;
 
-            queue_buffer(idx);
-            return true;
+        if (ioctl(fd_, VIDIOC_STREAMOFF, &type_) == -1) {
+            std::ostringstream ss;
+            ss << "VIDIOC_STREAMOFF failed: " << strerror(errno);
+            throw std::runtime_error(ss.str());
         }
 
-        void start_streaming(){
-            if(streaming){
-                return;
-            }
+        streaming_ = false;
+    }
 
-            init();
-            q_all_buffers();
-            
-            if(ioctl(fd, VIDIOC_STREAMON, &type) == -1) {
-                perror("Failed to begin camera stream");
-                 throw std::runtime_error("Failed to begin camera stream");
-            }
+    [[nodiscard]] bool is_streaming() const noexcept {
+        return streaming_;
+    }
 
-            streaming = true;
+    [[nodiscard]] size_t size() const noexcept {
+        return buffers_.size();
+    }
+
+    [[nodiscard]] void* buffer_start(size_t index) const {
+        if (index >= buffers_.size()) {
+            throw std::out_of_range("Buffer index out of range");
         }
+        return buffers_[index].data;
+    }
 
-        void stop_streaming(){
-            if(!streaming){
-                return;
-            }
-
-            if(ioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {
-                perror("Failed to terminate camera stream");
-                throw std::runtime_error("Failed to end camera stream");
-            }
-
-            streaming = false;
+    [[nodiscard]] size_t buffer_length(size_t index) const {
+        if (index >= buffers_.size()) {
+            throw std::out_of_range("Buffer index out of range");
         }
-
-        bool is_streaming() const {
-            return streaming;
-        }
-
-        size_t get_n_buffers() const {
-            return n_buffers;
-        }
-
-        void* buffer_start(const int i) {
-            return buffers[i].start;
-        }
-
-        size_t buffer_length(const int i) const {
-            return buffers[i].length();
-        }
+        return buffers_[index].length;
+    }
 };
