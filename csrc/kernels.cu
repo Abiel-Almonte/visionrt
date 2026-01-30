@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <c10/cuda/CUDAStream.h>
 
-#include "ops.hpp"
+#include "kernels.cuh"
 
 // yuyv2rgb Credits: https://stackoverflow.com/questions/72056909/convert-yuv2-yuyv-frames-to-rgb-without-use-of-opencv
 
