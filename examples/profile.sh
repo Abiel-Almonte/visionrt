@@ -21,3 +21,10 @@ ITERS=100 PERF=0 /opt/nvidia/nsight-systems-cli/2025.6.1/target-linux-x64/nsys p
 
 # `--capture-range-end` and `--force-overwrite` conflict. nsys will generate unique files names regardless.
 # remove all the previous `inference.{n}.nsys-rep` in /reports
+
+# profile capture
+ITERS=100 /opt/nvidia/nsight-systems-cli/2025.6.1/target-linux-x64/nsys profile \
+    -t cuda,osrt,nvtx \
+    --force-overwrite=true \
+    -o reports/capture \
+    python3 examples/profile_capture.py
