@@ -5,7 +5,6 @@ import copy
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchvision.models import resnet50, ResNet50_Weights
 from torch.cuda import cudart
 import nvtx
