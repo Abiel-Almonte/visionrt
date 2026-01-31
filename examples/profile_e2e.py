@@ -67,15 +67,6 @@ if __name__ == "__main__":
     cap.release()
 
     cam = Camera("/dev/video0", deterministic=True)
-    preprocess = Preprocessor()
-
-    class PreprocessorWrapper(nn.Module):
-        def __init__(self, preprocesser):
-            super().__init__()
-            self.preprocesser = preprocesser
-
-        def forward(self, frame):
-            return self.preprocesser._call_cuda(frame)
 
     # add inference optimizations
     config.cudagraphs = True
@@ -83,8 +74,8 @@ if __name__ == "__main__":
 
     model = (
         nn.Sequential(
-            PreprocessorWrapper(
-                preprocess
+            Preprocessor(
+                use_triton=False
             ),  # sequential trick, put the yuyv kernel into the model so we can include it in the cuda graph capture
             nn.Upsample(size=(224, 224), mode="bilinear", align_corners=False),
             resnet50(weights=ResNet50_Weights.IMAGENET1K_V2),
