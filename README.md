@@ -15,7 +15,7 @@ for frame in camera.stream():
 
 So fast you can see your camera's true refresh rate:
 
-![kde](images/latency_kde.png)
+![kde](images/latency_histogram.png)
 
 The orange narrow peaks show `visionrt` is so deterministic that you can actually see the hardware. The bimodal distribution is the webcam itself, not software jitter.
 
