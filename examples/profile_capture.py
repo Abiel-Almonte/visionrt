@@ -70,7 +70,7 @@ if __name__ == "__main__":
     frame = cap.read()[-1]
     profile("opencv_capture", opencv_camera, cap, iters)
 
-    for _ in range(10): # warmup
+    for _ in range(10):  # warmup
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         chw = np.transpose(rgb, (2, 0, 1))
         tensor = torch.from_numpy(chw).unsqueeze(0).cuda().float()
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     profile("visionrt_capture", visionrt_camera, cam, iters)
 
     for _ in range(10):
-        _preprocess._call_cuda(frame) # warmup
+        _preprocess._call_cuda(frame)  # warmup
 
     profile("visionrt_preprocess", visionrt_preprocess, frame, iters)
     profile("visionrt", visionrt, cam, iters)
