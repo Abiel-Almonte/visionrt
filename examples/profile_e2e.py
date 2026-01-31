@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     model = compile(model)
 
-    @nvtx.annotate("visionrt_e2e", color="blue")
+    @nvtx.annotate("visionrt_e2e", color="red")
     def visionrt():
         out = model(next(cam))  # model includes preprocessing
         # torch.cuda.synchronize() the graph executor already does a sync on the capture stream
