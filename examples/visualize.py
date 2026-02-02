@@ -192,7 +192,7 @@ def main(iters: int = 100) -> None:
     ]
     ax.legend(
         handles=legend_elements,
-        fontsize=13,
+        fontsize=15,
         loc="upper right",
         frameon=True,
         fancybox=True,
